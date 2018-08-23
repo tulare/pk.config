@@ -1,9 +1,6 @@
 # -*- encoding: utf-8 -*-
 
-from setuptools import (
-    setup,
-    find_packages
-)
+from setuptools import setup, find_packages
 
 with open('README.md') as f :
     readme = f.read()
@@ -20,5 +17,7 @@ setup(
     author_email='tulare.paxgalactica@gmail.com',
     url='https://github.com/tulare/pk.config',
     license=license,
-    packages=find_packages(exclude=('tests',))
+    packages=find_packages(exclude=('tests',)),
+    namespace_packages=['pk'],
+    zip_safe=False,
 )
