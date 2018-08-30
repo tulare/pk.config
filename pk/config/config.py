@@ -12,7 +12,7 @@ import sys
 import inspect
 import sqlite3
 
-from .exceptions import *
+from .exceptions import ConfigurationError, ConfigurationKeyError
 
 # --------------------------------------------------------------------
 
