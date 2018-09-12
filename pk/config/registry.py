@@ -9,11 +9,14 @@ __all__ = [
     'HKEYS', 'REG_TYPES', 'REG_TYPES_ID',
     'RegistryKeyOk', 'RegistryKeyError',
     'RegistryValueError',
-    'Registry', 'RegKey', 'RegValue',
+    'Registry', 'RegValue',
 ]
 
 import sys
 PY3 = sys.version_info > (3,)
+
+import os
+import datetime
 
 if PY3 :
     # python 3.x
@@ -71,6 +74,8 @@ REG_TYPES_ID = dict(
     (v,k) for k,v in REG_TYPES.items()
 )
 
+WIN32_EPOCH = datetime.datetime(1601, 1, 1)
+
 # --------------------------------------------------------------------
 
 def reg_unicode(chaine) :
@@ -91,41 +96,18 @@ def reg_str(value) :
     except UnicodeEncodeError :
         return value.encode(sys.stdout.encoding)
 
-# --------------------------------------------------------------------
+def reg_unicode_iso(value) :
+    if PY3 :
+        return value
+    return value.decode('ISO-8859-1')
 
-class RegKey(object) :
+def reg_str_iso(value) :
+    if PY3 :
+        return value
+    return value.encode('ISO-8859-1')
 
-    def __init__(self, key) :
-        self._key = key
-        self.unicode = reg_unicode(self._key)
-
-    def __str__(self) :
-        if PY3 :
-            return self._key
-        return self.unicode.encode(sys.stdout.encoding)
-
-    def __repr__(self) :
-        return '{}({})'.format(
-            self.__class__.__name__,
-            self
-        )
-
-    def __eq__(self, other) :
-        if isinstance(other, self.__class__) :
-            return self.unicode == other.unicode
-        return NotImplemented        
-
-    @property
-    def string(self) :
-        if PY3 :
-            return self._key
-        return self.unicode.encode('ISO-8859-1')
-
-    @property
-    def iso(self) :
-        if PY3 :
-            return self._key
-        return self._key.decode('ISO-8859-1')
+def reg_datetime(timestamp) :
+    return WIN32_EPOCH + datetime.timedelta(microseconds=timestamp // 10)
 
 # --------------------------------------------------------------------
 
@@ -139,9 +121,9 @@ class RegValue(object) :
         return reg_str(self.value)
 
     def __repr__(self) :
-        return '{}({!r}, {!r})'.format(
+        return '{}({}, {})'.format(
             self.__class__.__name__,
-            self.value,
+            self,
             self.regtype
         )
         
@@ -187,8 +169,11 @@ class Registry(object) :
     def __str__(self) :
         return '[{}]\\{}'.format(
             self._hkey,
-            self.path.encode(sys.stdout.encoding)
+            reg_str(self.path)
         )
+
+    def __len__(self) :
+        return self.nb_keys
 
     @property
     def node(self) :
@@ -199,13 +184,32 @@ class Registry(object) :
         return getattr(self, '_path', '')
 
     @property
+    def parent(self) :
+        parent_path = os.path.dirname(self.path)
+        return Registry(self._hkey)[parent_path]
+
+    @property
+    def last_modified(self) :
+        keys, values, modified = winreg.QueryInfoKey(self.node)
+        return reg_datetime(modified)
+
+    @property
+    def nb_keys(self) :
+        nb_keys, _, _ = winreg.QueryInfoKey(self.node)
+        return nb_keys
+
+    @property
+    def nb_values(self) :
+        _, nb_values, _ = winreg.QueryInfoKey(self.node)
+        return nb_values
+
+    @property
     def iter_keys(self) :
         indice = 0
         while True :
             try :
                 key = winreg.EnumKey(self.node, indice)
-                k = RegKey(key)
-                yield k.iso
+                yield reg_unicode_iso(key)
                 indice += 1
             except WindowsError as e :
                 break
@@ -242,18 +246,21 @@ class Registry(object) :
             return RegistryKeyError(*e.args)
 
     def create_key(self, key) :
-        k = RegKey(key)
-        winreg.CreateKey(self.node, k.string)
+        uni_key = reg_unicode(key)
+        reg_key = reg_str_iso(uni_key)
+        winreg.CreateKey(self.node, reg_key)
         return RegistryNode(self, key)
 
     def delete_key(self, key, force=False) :
+        uni_key = reg_unicode(key)
+        reg_key = reg_str_iso(uni_key)
+        str_key = reg_str(uni_key)
+        
         # Vérifier la validité de la clé avant toute chose
-        try :
-            RegistryNode(self, key)
-        except Exception as e :
-            raise RegistryKeyError('{} : {}'.format(e, key))            
-
-        k = RegKey(key)
+        if uni_key not in self.keys :
+            raise RegistryKeyError(
+                '{} : {}'.format('key not found', str_key)
+            )            
 
         # doit-on nettoyer les sous-clés d'abord ?
         if force :
@@ -263,9 +270,9 @@ class Registry(object) :
 
         # nettoie la clef, ne marche pas si elle contient des sous-clés
         try :
-            winreg.DeleteKey(self.node, k.string)
+            winreg.DeleteKey(self.node, reg_key)
         except WindowsError as e :
-            raise RegistryKeyError('{} : {}'.format(e, key))
+            raise RegistryKeyError('{} : {}'.format(e, str_key))
 
     @property
     def iter_values(self) :
@@ -273,8 +280,8 @@ class Registry(object) :
         while True :
             try :
                 name, value, reg_type = winreg.EnumValue(self.node, indice)
-                k = RegKey(name)
-                yield k.iso, value, REG_TYPES_ID[reg_type]
+                reg_name = reg_unicode_iso(name)
+                yield reg_name, value, REG_TYPES_ID[reg_type]
                 indice += 1
             except WindowsError as e :
                 break
@@ -292,9 +299,9 @@ class Registry(object) :
 
     def get_value(self, name=None, default=None, expand=False) :
         name = name or ''
-        k = RegKey(name)
+        uni_name = reg_unicode(name)
         try :
-            value, regtype = self.typed_values.get(k.unicode, default)
+            value, regtype = self.typed_values.get(uni_name)
         except TypeError :
             return default
 
@@ -308,17 +315,21 @@ class Registry(object) :
 
     def set_value(self, name, value, regtype=None) :
         name = name or ''
-        k = RegKey(name)
+        uni_name = reg_unicode(name)
+        reg_name = reg_str_iso(uni_name)
+
         v = RegValue(value, regtype)
         key = winreg.OpenKey(self.node, '', 0, winreg.KEY_SET_VALUE)
-        winreg.SetValueEx(key, k.string, 0, REG_TYPES[v.regtype], v.value)
+        winreg.SetValueEx(key, reg_name, 0, REG_TYPES[v.regtype], v.value)
 
     def delete_value(self, name) :
         name = name or ''
-        k = RegKey(name)
+        uni_name = reg_unicode(name)
+        reg_name = reg_str_iso(uni_name)
+        
         try :
             key = winreg.OpenKey(self.node, '', 0, winreg.KEY_WRITE)
-            winreg.DeleteValue(key, k.string)
+            winreg.DeleteValue(key, reg_name)
             winreg.CloseKey(key)
         except Exception as e :
             raise RegistryValueError(*e.args)
@@ -334,13 +345,14 @@ class RegistryNode(Registry) :
     def __init__(self, node, key) :
         super(RegistryNode, self).__init__(node._hkey)
 
-        k = RegKey(key)
+        uni_key = reg_unicode(key)
+        reg_key = reg_str_iso(uni_key)
 
         if node.path :
-            self._path = node.path + '\\' + k.unicode
+            self._path = node.path + u'\\' + uni_key
         else :
-            self._path = node.path + k.unicode
-        self._node = winreg.OpenKey(node.node, k.string)
+            self._path = node.path + uni_key
+        self._node = winreg.OpenKey(node.node, reg_key)
 
 # --------------------------------------------------------------------
 
