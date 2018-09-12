@@ -11,6 +11,7 @@ import os
 import sys
 import inspect
 import sqlite3
+import json
 
 from .exceptions import ConfigurationError, ConfigurationKeyError
 
@@ -78,7 +79,15 @@ class Configuration(object) :
                 if default is None :
                     raise ConfigurationKeyError(key)
                 return default
+
+    def get_json(self, key, default=None) :
         
+        try :
+            json_str = self.get(key, default)
+            return json.loads(json_str)
+        except Exception as e :
+            return default
+
     def add(self, key, value) :
         with sqlite3.connect(self.database) as db :
             try :
@@ -98,6 +107,14 @@ class Configuration(object) :
                 db.commit()
 
             return cursor.rowcount
+
+    def add_json(self, key, value) :
+        
+        try :
+            json_str = json.dumps(value)
+            return self.add(key, json_str)
+        except Exception as e :
+            return 0
         
     def delete(self, key) :
         with sqlite3.connect(self.database) as db :
