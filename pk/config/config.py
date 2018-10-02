@@ -35,6 +35,17 @@ def project_real_path(relative_path) :
 
 # --------------------------------------------------------------------
 
+def project_path() :
+    try :
+        prj_path = os.path.dirname(os.path.realpath(__loader__.archive))
+    except (NameError, AttributeError) :
+        prj_path = os.path.dirname(os.path.realpath(__file__))
+
+    return prj_path
+        
+
+# --------------------------------------------------------------------
+
 PROJECT_PATH = project_real_path('.') 
 CONFIG_DEFAULT_DATABASE = PROJECT_PATH + '/config.db'
 
